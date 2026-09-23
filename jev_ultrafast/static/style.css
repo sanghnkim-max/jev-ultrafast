@@ -771,3 +771,8 @@ textarea:focus-visible {
 .gates td{padding:5px 4px;border-bottom:1px solid var(--line)}
 .gates td:nth-child(2),.gates td:nth-child(3){text-align:right;white-space:nowrap}
 .gates .ok{color:var(--green)}.gates .hit{color:#b4471c;font-weight:600}.gates .off{color:#9aa293}
+
+.helper-input{margin-top:6px;font-size:11px}
+.helper-input summary{cursor:pointer;color:#687260}
+.helper-input pre{max-height:260px;overflow:auto;margin:4px 0 8px;font-size:11px;white-space:pre-wrap;word-break:break-word}
+.helper-input p{margin:6px 0 0;font-size:11px}

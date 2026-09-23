@@ -112,9 +112,14 @@ class Browser:
         return result
 
     def close(self):
-        if self.target:
-            cdp("Target.closeTarget", targetId=self.target)
-            self.target = None
+        target, self.target = self.target, None
+        if target:
+            try:
+                cdp("Target.closeTarget", targetId=target)
+            except RuntimeError as error:
+                # Closed by hand or by a Chrome restart: the tab is already gone, which is what close wants.
+                if "No target with given id" not in str(error):
+                    raise
 
 
 def fingerprint(state):

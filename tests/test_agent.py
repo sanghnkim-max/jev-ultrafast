@@ -203,6 +203,14 @@ def test_generated_text_reused_only_for_identical_retry_context(runner, monkeypa
     assert runner.pending_text is None
 
 
+def test_text_helper_input_is_recorded_with_its_output(runner, monkeypatch):
+    monkeypatch.setattr(loop, "field_text", Mock(return_value=("book", {"model": "test", "latency_ms": 10})))
+    runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    call = runner.state["text_calls"][0]
+    assert call["input"]["goal"] == "Find a book" and call["input"]["field"]["label"] == "Search"
+    assert call["value"] == "book" and runner.state["history"][-1]["text_call"] == 0
+
+
 def test_changed_field_context_does_not_reuse_generated_text(runner, monkeypatch):
     helper = Mock(return_value=("book", {"model": "test", "latency_ms": 10}))
     monkeypatch.setattr(loop, "field_text", helper)
@@ -650,3 +658,28 @@ def test_every_task_has_a_goal_start_url_and_check():
     all_tasks = tasks("http://127.0.0.1:8766")
     assert {t.suite for t in all_tasks.values()} == {"core", "wildlife", "reallife"}
     assert all(t.goal and t.url.startswith("http") and callable(t.check) for t in all_tasks.values())
+
+
+def test_closing_a_tab_that_is_already_gone_is_not_an_error(monkeypatch):
+    import jev_ultrafast.browser as browser
+
+    b = browser.Browser.__new__(browser.Browser)
+    b.target = "gone"
+    cdp = Mock(side_effect=RuntimeError("{'code': -32602, 'message': 'No target with given id found'}"))
+    monkeypatch.setattr(browser, "cdp", cdp)
+    b.close()
+    b.close()
+    assert b.target is None and cdp.call_count == 1
+    b.target = "other"
+    cdp.side_effect = RuntimeError("Browser disconnected")
+    with pytest.raises(RuntimeError, match="disconnected"):
+        b.close()
+
+
+def test_a_failed_tab_close_does_not_block_the_next_run(monkeypatch):
+    from jev_ultrafast import demo
+
+    monkeypatch.setattr(demo, "AGENT", Mock(close=Mock(side_effect=RuntimeError("Browser disconnected"))))
+    with pytest.raises(RuntimeError):
+        demo.close_browser()
+    assert demo.AGENT is None
