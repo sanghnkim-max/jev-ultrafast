@@ -61,7 +61,7 @@ cp .env.example .env
 uv run jev
 ```
 
-Open **http://127.0.0.1:8766**. It is a test console: pick a verified task (core, wildlife, or real-life suite) or a custom URL, toggle System 2, and click **Start run → Run automatically**, or **Run this suite**. It shows numbered elements, operation and target probabilities, whether Jev asked for System 2 and what System 2 decided, a gates table (values against thresholds), run cost, and an independent verification of the final page. **Choose next** pauses before execution. **Speak goal** dictates the goal in Chrome/Edge (Web Speech API, which sends audio to the browser's speech service).
+Open **http://127.0.0.1:8766**. It is a test console: pick a verified task (core, wildlife, or real-life suite) or a custom URL, toggle System 2, and click **Start run** (it runs to the end; **Pause** stops it), or **Run this suite**. It shows numbered elements, operation and target probabilities, whether Jev asked for System 2 and what System 2 decided, a gates table (values against thresholds), run cost, and an independent verification of the final page. After a pause, **Choose next** and **Execute choice** step manually and **Run automatically** resumes. **Speak goal** dictates the goal in Chrome/Edge (Web Speech API, which sends audio to the browser's speech service).
 
 Chrome connects through [Browser Harness](https://github.com/browser-use/browser-harness), installed by `uv sync`. Run `uv run browser-harness --doctor` if it needs connecting. Allow remote debugging in Chrome when prompted.
 

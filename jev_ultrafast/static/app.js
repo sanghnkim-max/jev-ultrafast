@@ -255,7 +255,15 @@ function render() {
 $("task-form").addEventListener("submit", (event) => {
   event.preventDefault();
   automatic = false;
-  perform(() => start($("scenario").value, $("goal").value, $("reasoning").checked), "Opening a fresh browser…");
+  perform(async () => {
+    await start($("scenario").value, $("goal").value, $("reasoning").checked);
+    // A run goes straight to its end; Pause stops after the current request, and step controls resume from there.
+    automatic = true;
+    controls();
+    $("status").textContent = "Running…";
+    await runToEnd();
+    automatic = false;
+  }, "Opening a fresh browser…");
 });
 $("scenario").addEventListener("change", selectTask);
 const start = (name, goal, reasoning) =>
