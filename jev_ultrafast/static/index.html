@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="demo-token" content="__TOKEN__" />
-    <title>Jev Ultrafast · Browser Use</title>
+    <title>Jev Ultrafast · Test console</title>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
     <link rel="stylesheet" href="/style.css" />
   </head>
@@ -21,27 +21,36 @@
           <p class="eyebrow">A BROWSER THAT CHOOSES</p>
           <h1>Every page is a set of possibilities.</h1>
           <p>
-            Jev picks the next action. A small language model handles the words.
-            <a href="/demo.mp4" target="_blank" rel="noopener">Watch the real Google Flights run ↗</a>
+            Jev picks the next action and decides when to ask a reasoning model. A small language model handles the words.
+            Each test task is checked against the final page, not the model's DONE.
           </p>
         </div>
-        <div class="model-tag">jev-latest <span>+ text helper</span></div>
+        <div class="model-tag">jev-latest <span id="system2-tag">+ text helper</span></div>
       </section>
       <form id="task-form">
         <div class="task-label">
           <label for="goal">Give it a task</label
-          ><select id="scenario" name="scenario" aria-label="Demo scenario">
-            <option value="flights">Google Flights · real web</option>
-            <option value="travel">Travel planner · fixture</option>
-            <option value="research">Reading room · fixture</option>
+          ><select id="scenario" name="task" aria-label="Test task">
+            <option value="custom">Custom URL · no verifier</option>
           </select>
         </div>
+        <input id="start-url" name="url" type="url" aria-label="Start URL" placeholder="https://example.com/" />
         <div class="task-row">
-          <textarea id="goal" name="goal" rows="5">
-Find one-way flights from Zurich to London on September 20, 2026, for one adult in economy. Stop when matching flight options are visible. Do not select or book a flight.</textarea
-          ><button type="submit" id="start" class="primary">
-            Start demo <span>↗</span>
-          </button>
+          <textarea id="goal" name="goal" rows="5"></textarea
+          ><span class="start-stack"
+            ><button type="submit" id="start" class="primary">Start run <span>↗</span></button
+            ><button type="button" id="mic" title="Dictate the goal (Chrome/Edge Web Speech API; audio is sent to the browser's speech service)">Speak goal</button></span
+          >
+        </div>
+        <div class="test-options">
+          <label class="overlay-control" title="Jev decides when a reasoning model takes over a step"
+            ><input id="reasoning" name="reasoning" type="checkbox" /> System 2
+            <small id="system2-model">checking…</small></label
+          ><span class="suite"
+            ><label class="overlay-control"
+              ><input id="both-modes" type="checkbox" checked /> Compare with System 1 only</label
+            ><button type="button" id="suite">Run this suite</button></span
+          >
         </div>
       </form>
       <div class="toolbar">
@@ -60,6 +69,7 @@ Find one-way flights from Zurich to London on September 20, 2026, for one adult 
         </div>
       </div>
       <div id="error" role="alert" hidden></div>
+      <div id="verdict" class="verdict" hidden></div>
       <section class="workspace">
         <div class="browser-panel">
           <div class="browser-bar">
@@ -106,8 +116,12 @@ Find one-way flights from Zurich to London on September 20, 2026, for one adult 
               <span>Operation</span
               ><strong id="completion">—</strong>
             </div>
+            <div><span>Run cost</span><strong id="cost">—</strong></div>
           </div>
           <div id="operation-choices" class="operation-choices"></div>
+          <div id="system2" class="system2" hidden></div>
+          <p class="distribution-label">Gates <span>value vs threshold</span></p>
+          <table id="gates" class="gates"></table>
           <p class="distribution-label">
             Indexed elements
             <span id="ranking-note">Choose next to rank</span>
@@ -127,6 +141,15 @@ Find one-way flights from Zurich to London on September 20, 2026, for one adult 
         </div>
         <div id="history">
           <p class="muted">Each executed action leaves an observed result.</p>
+        </div>
+      </section>
+      <section class="trace">
+        <div class="trace-heading">
+          <h2>Test results <span id="result-count">0 runs</span></h2>
+          <button type="button" id="download-results" disabled>Export results ↓</button>
+        </div>
+        <div id="results">
+          <p class="muted">Finished runs appear here with their independent verification.</p>
         </div>
       </section>
       <details>

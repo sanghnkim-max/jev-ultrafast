@@ -60,6 +60,8 @@
     if (rname==='gridcell' && e.querySelector('button,[role="button"]')) continue;
     const base={node:identity(e),role:rname,label:name(e)||rname,
       rect:{x:r.x,y:r.y,w:r.width,h:r.height}};
+    // Same hit test as the executor. Covered controls (under a dialog, banner, or overlay) are not offered.
+    if (!e.contains(document.elementFromPoint(x,y))) base.covered=true;
     for (const key of ['checked','selected','expanded']) {
       const value=e.getAttribute('aria-'+key);
       if (value!==null) base[key]=value;
@@ -92,8 +94,8 @@
   const text=words.join('\n').slice(0,6000), height=document.documentElement.scrollHeight;
   const page_key=cache.pageKey(), guards={};
   for (const a of actions) if (!(a.node in guards)) guards[a.node]=cache.guard(cache.nodes.get(a.node));
-  // Compare meaning and identity. Geometry is always resolved and hit-tested just before input.
-  const semantics=actions.map(({rect,...action})=>action);
+  // Compare meaning and identity. Geometry and coverage are always resolved and hit-tested just before input.
+  const semantics=actions.map(({rect,covered,...action})=>action);
   const marker=[performance.timeOrigin,location.href,scrollX,scrollY,innerWidth,innerHeight,
     document.title,text,semantics,page_key[6]];
   const omitted_actions=Math.max(0,actions.length-250);

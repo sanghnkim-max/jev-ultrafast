@@ -124,6 +124,18 @@ def main():
         assert value == "Generated", repr(value)
         assert any(a.get("role") == "option" for a in page["actions"])
         passed.append("real text input waits for asynchronous combobox suggestions")
+
+        browser.evaluate("(()=>{const f=document.createElement('form');f.innerHTML="
+                         "'<input aria-label=\"Site search\" id=site>';f.onsubmit=e=>{e.preventDefault();"
+                         "window.submitted=document.querySelector('#site').value};document.body.prepend(f)})()")
+        page = browser.observe(screenshot=False)
+        search = next(a for a in page["actions"] if a["kind"] == "fill" and a["label"] == "Site search")
+        browser.act(search, page, text="snow leopard")
+        page = browser.observe(screenshot=False)
+        enter = next(a for a in page["actions"] if a["kind"] == "submit" and a["label"] == "Site search")
+        browser.act(enter, page)
+        assert browser.evaluate("window.submitted") == "snow leopard"
+        passed.append("PRESS_ENTER presses Enter in the observed field and submits its form")
         browser.call("Page.navigate", url="about:blank")
         assert not browser.fresh(page, field)
         passed.append("navigation invalidates the old document")

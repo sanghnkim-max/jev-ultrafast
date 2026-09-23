@@ -28,7 +28,7 @@ Every observation produces a new element table:
 ...
 ```
 
-The operations are `CLICK`, `TYPE_TEXT`, `SELECT`, `SCROLL_UP`, `SCROLL_DOWN`, `WAIT`, `DONE`, and `BLOCKED`. Only supported operations and targets are offered.
+The operations are `CLICK`, `TYPE_TEXT`, `PRESS_ENTER`, `SELECT`, `SCROLL_UP`, `SCROLL_DOWN`, `WAIT`, `DONE`, and `BLOCKED`. Only supported operations and targets are offered: a control covered by a dialog or banner is not offered, and large dropdowns are capped.
 
 ```text
                       one TypeSafe request
@@ -57,11 +57,11 @@ git clone https://github.com/browser-use/jev-ultrafast.git
 cd jev-ultrafast
 uv sync
 cp .env.example .env
-# Add TYPESAFE_API_KEY and TEXT_MODEL_API_KEY.
+# Add TYPESAFE_API_KEY and TEXT_MODEL_API_KEY, or one OPENROUTER_API_KEY for Jev and both helpers.
 uv run jev
 ```
 
-Open **http://127.0.0.1:8766** and click **Start demo → Run automatically**. The inspector shows numbered elements, operation probabilities, target probabilities, and executed actions. **Choose next** pauses before execution.
+Open **http://127.0.0.1:8766**. It is a test console: pick a verified task (core, wildlife, or real-life suite) or a custom URL, toggle System 2, and click **Start run → Run automatically**, or **Run this suite**. It shows numbered elements, operation and target probabilities, whether Jev asked for System 2 and what System 2 decided, a gates table (values against thresholds), run cost, and an independent verification of the final page. **Choose next** pauses before execution. **Speak goal** dictates the goal in Chrome/Edge (Web Speech API, which sends audio to the browser's speech service).
 
 Chrome connects through [Browser Harness](https://github.com/browser-use/browser-harness), installed by `uv sync`. Run `uv run browser-harness --doctor` if it needs connecting. Allow remote debugging in Chrome when prompted.
 
@@ -91,6 +91,22 @@ uv run --env-file .env python examples/run.py \
 
 `uv run --env-file .env python examples/flights.py --keep-open` performs the flight search, checks the actual route/date/results, and saves its trace. It does not select or book a flight.
 
+## System 2: slow review, same action space
+
+Jev is System 1: fast, one request per step. `Agent(..., reasoning=True)` or `examples/run.py --reasoning` adds a reasoning LLM as System 2. Jev decides when to use it: the same Jev request carries one more yes/no head, "should System 2 decide this step?". System 2 sees the same element table and chooses from the same operation/target heads. Code validates its answer like any Jev answer, and it still never emits selectors or text to type. Its one-sentence note goes back to System 1 and the text helper as context. See [design.md](docs/design.md#system-2-review) and [reasoner.py](jev_ultrafast/reasoner.py).
+
+```text
+                one Jev request
+page → operation + targets + system2? ── no ──────────────────────→ execute
+                                  │                                   ↑
+                                  └─ yes → reasoning LLM (System 2) ──┘
+                                           validated operation + target
+```
+
+Whichever system chose it, the executor never runs the same action with the same argument more than three times.
+
+`uv run python scripts/compare_systems.py --suite all` runs the core, [wildlife, and real-life suites](docs/benchmark.md) and checks each final page independently; `--max-calls` caps a session's model calls. In [a small smoke comparison](docs/system2.md), Jev asked for System 2 only at hard steps. The final round passed 10/10 with review and 9/10 without, at the same median time.
+
 ## Why it moves
 
 - **One request per decision cycle.** Operation and target heads share the same observed state.
@@ -112,6 +128,7 @@ Every executed target is resolved from an observed node. The executor rechecks p
 | [snapshot.js](jev_ultrafast/snapshot.js) | Atomic DOM snapshot, indexed controls, freshness guards |
 | [browser.py](jev_ultrafast/browser.py) | Browser connection, current geometry, execution |
 | [model.py](jev_ultrafast/model.py) | Dynamic operation/target heads and text generation |
+| [reasoner.py](jev_ultrafast/reasoner.py) | Optional System 2 triggers and validated review |
 | [questions.py](jev_ultrafast/questions.py) | Model instructions |
 | [demo.py](jev_ultrafast/demo.py) | Local inspector |
 
