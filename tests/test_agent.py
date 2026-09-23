@@ -174,7 +174,11 @@ def runner():
         "started_at": time.perf_counter(),
         "record": False,
         "text_calls": [],
+        "reviews": [],
     }
+    a.reasoning = False
+    a.pending_review = None
+    a.failed = None
     return a
 
 
@@ -211,11 +215,27 @@ def test_changed_field_context_does_not_reuse_generated_text(runner, monkeypatch
     assert helper.call_count == 2
 
 
-def test_loading_waits_do_not_trigger_no_progress_stop(runner):
-    for _ in range(5):
+def test_same_action_and_argument_never_executes_a_fourth_time(runner):
+    for _ in range(3):
         runner.state["decision"] = decision("wait")
         runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
-    assert len(runner.state["history"]) == 5 and runner.state["status"] == "ready"
+    assert runner.state["status"] == "ready" and runner.state["browser"].act.call_count == 3
+    runner.state["decision"] = decision("wait")
+    with pytest.raises(ValueError, match="already ran 3 times"):
+        runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    assert runner.state["status"] == "blocked" and runner.state["browser"].act.call_count == 3
+
+
+def test_repeat_boundary_counts_the_argument(runner, monkeypatch):
+    values = iter(["Zurich", "Zurich", "Zurich", "London", "Zurich"])
+    monkeypatch.setattr(loop, "field_text", lambda _context: (next(values), {"model": "test", "latency_ms": 1}))
+    for _ in range(4):
+        runner.state["decision"] = decision("e1")
+        runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    runner.state["decision"] = decision("e1")
+    with pytest.raises(ValueError, match="already ran 3 times"):
+        runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    assert [h["text"] for h in runner.state["history"]] == ["Zurich", "Zurich", "Zurich", "London"]
 
 
 def test_stale_observation_preserves_executed_action(runner):
@@ -318,3 +338,315 @@ def test_navigation_during_prediction_reobserves_without_action(runner):
     assert runner.state["status"] == "ready"
     assert runner.state["decision"] is None
     runner.state["browser"].act.assert_not_called()
+
+
+def s1(operation, target=None, choice_id=None, p=1.0, system2=None):
+    return {
+        **decision(choice_id or operation),
+        "system": 1,
+        "operation": operation,
+        "target": target,
+        "probabilities": {choice_id or operation: p},
+        "operation_probabilities": {operation: p},
+        "target_probabilities": {target: p} if target else {},
+        "system2": system2,
+    }
+
+
+def reviewer(monkeypatch, output):
+    from jev_ultrafast import reasoner
+
+    monkeypatch.setenv("REVIEW_MODEL_API_KEY", "test")
+    post = Mock(return_value={"choices": [{"message": {"content": json.dumps(output)}}]})
+    monkeypatch.setattr(model, "post_json", post)
+    return reasoner, post
+
+
+def jev(system2, operation="DONE"):
+    def post(_url, _key, body):
+        answers = {"operation": choice(body["questions"]["operation"]["criteria"], operation)}
+        if "system2" in body["questions"]:
+            answers["system2"] = {"type": "noul", "noul": system2}
+        return {"model": "test", "answers": answers}
+
+    return post
+
+
+def test_jev_decides_system2_in_the_same_request_only_when_enabled(monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test")
+    calls = []
+    post = jev(0.8)
+    monkeypatch.setattr(model, "post_json", lambda *a: calls.append(a[2]) or post(*a))
+    assert model.choose(page(), "Find a book", [], engage=True)["system2"] == 0.8
+    assert model.choose(page(), "Find a book", [])["system2"] is None
+    assert "system2" in calls[0]["questions"] and "system2" not in calls[1]["questions"]
+    assert calls[0]["questions"]["system2"]["type"] == "noul"
+
+
+@pytest.mark.parametrize("answer", [None, {"noul": 1.5}, {"noul": float("nan")}, {"noul": "yes"}])
+def test_invalid_system2_probability_is_rejected(monkeypatch, answer):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test")
+
+    def post(_url, _key, body):
+        return {"model": "test", "answers": {"operation": choice(body["questions"]["operation"]["criteria"], "DONE"),
+                                             "system2": answer}}
+
+    monkeypatch.setattr(model, "post_json", post)
+    with pytest.raises(ValueError, match="Invalid TypeSafe"):
+        model.choose(page(), "Find a book", [], engage=True)
+
+
+def test_system2_maps_to_observed_targets(monkeypatch):
+    reasoner, post = reviewer(monkeypatch, {"analysis": "Not searched yet.", "operation": "CLICK", "target": 2,
+                                            "note": "Submit the search."})
+    d = reasoner.review(page(), "Find a book", [], s1("DONE", system2=0.9))
+    assert d["system"] == 2 and d["choice"] == "e3" and d["target"] == "2" and not d["agrees"]
+    sent = json.loads(post.call_args.args[2]["messages"][1]["content"])
+    assert sent["system1"]["system2_probability"] == 0.9 and "WAIT" in sent["operations"]
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        {"operation": "CLICK", "target": "999"},
+        {"operation": "CLICK", "target": "#search > button"},
+        {"operation": "TYPE_TEXT", "target": "2"},  # A button is not an editable target.
+        {"operation": "EVAL", "target": None},
+        {"operation": "CLICK", "target": "2", "note": {"code": "click()"}},
+        "not an object",
+    ],
+)
+def test_invalid_system2_output_is_rejected(monkeypatch, output):
+    reasoner, _ = reviewer(monkeypatch, output)
+    with pytest.raises(reasoner.ReviewUnavailable, match="Invalid System 2"):
+        reasoner.review(page(), "Find a book", [], s1("DONE", system2=0.9))
+
+
+def test_system2_needs_its_own_credential(monkeypatch):
+    from jev_ultrafast import reasoner
+
+    monkeypatch.delenv("REVIEW_MODEL_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="REVIEW_MODEL_API_KEY"):
+        reasoner.settings()
+
+
+@pytest.fixture
+def thinker(runner, monkeypatch):
+    runner.reasoning = True
+    runner.pending_review = None
+    runner.state["reviews"] = []
+    return runner
+
+
+@pytest.mark.parametrize("system2, reviewed", [(0.9, True), (0.2, False)])
+def test_jev_not_code_decides_when_system2_runs(thinker, monkeypatch, system2, reviewed):
+    monkeypatch.setattr(loop, "choose", Mock(return_value=s1("DONE", system2=system2)))
+    review = Mock(return_value={**s1("CLICK", "2", "e3"), "system": 2, "agrees": False})
+    monkeypatch.setattr(loop.reasoner, "review", review)
+    thinker.command("tick")
+    assert review.called is reviewed
+    assert thinker.state["status"] == ("ready" if reviewed else "done")
+
+
+def test_system2_overrides_premature_done_and_its_note_reaches_both_models(thinker, monkeypatch):
+    monkeypatch.setattr(loop, "choose", Mock(return_value=s1("DONE", system2=0.9)))
+    review = Mock(return_value={**s1("TYPE_TEXT", "1", "e1"), "system": 2, "note": "Type the title first."})
+    monkeypatch.setattr(loop.reasoner, "review", review)
+    helper = Mock(return_value=("book", {"model": "test", "latency_ms": 10}))
+    monkeypatch.setattr(loop, "field_text", helper)
+    thinker.command("tick")
+    assert thinker.state["status"] == "ready" and len(thinker.state["reviews"]) == 1
+    assert helper.call_args.args[0]["advice"] == "Type the title first."
+    assert thinker.state["history"][-1]["system"] == 2 and thinker.state["history"][-1]["note"]
+    sent = model.recent_actions(thinker.state["history"], ("action", "note"))
+    assert sent[-1]["note"] == "Type the title first."
+    assert model.recent_actions([{"action": "Go"}], ("action", "note")) == [{"action": "Go"}]
+
+
+def test_stale_retry_reuses_identical_review(thinker, monkeypatch):
+    monkeypatch.setattr(loop, "choose", Mock(return_value=s1("DONE", system2=0.9)))
+    review = Mock(return_value={**s1("CLICK", "2", "e3"), "system": 2})
+    monkeypatch.setattr(loop.reasoner, "review", review)
+    thinker.state["browser"].act.side_effect = [StalePage("changed before input"), None]
+    thinker.command("tick")
+    thinker.command("tick")
+    assert review.call_count == 1 and thinker.state["browser"].act.call_count == 2
+    assert thinker.pending_review is None
+
+
+def test_system2_is_off_by_default_and_budgeted(runner, monkeypatch):
+    runner.reasoning = False
+    runner.state["reviews"] = []
+    choose = Mock(return_value=s1("DONE", system2=0.9))
+    monkeypatch.setattr(loop, "choose", choose)
+    review = Mock()
+    monkeypatch.setattr(loop.reasoner, "review", review)
+    runner.command("tick")
+    assert runner.state["status"] == "done" and choose.call_args.kwargs["engage"] is False
+    runner.reasoning, runner.state["status"] = True, "ready"
+    runner.state["reviews"] = [{"fingerprint": "x"}] * loop.MAX_REVIEWS
+    runner.command("tick")
+    review.assert_not_called()
+    assert choose.call_args.kwargs["engage"] is False
+
+
+def test_late_or_failed_system2_leaves_system1_decision(thinker, monkeypatch):
+    from jev_ultrafast import reasoner
+
+    monkeypatch.setenv("REVIEW_MODEL_API_KEY", "test")
+    monkeypatch.setenv("REVIEW_TIMEOUT", "0.05")
+    monkeypatch.setattr(model, "post_json", lambda *_args: time.sleep(1))
+    with pytest.raises(reasoner.ReviewUnavailable, match="deadline"):
+        reasoner.review(page(), "Find a book", [], s1("DONE", system2=0.9))
+    monkeypatch.setattr(loop, "choose", Mock(return_value=s1("CLICK", "2", "e3", system2=0.9)))
+    thinker.command("tick")
+    assert thinker.state["history"][-1]["action"] == "Go"  # Jev's validated non-terminal choice stands.
+    assert "deadline" in thinker.state["reviews"][0]["failed"]
+
+
+def test_unsure_stop_without_system2_answer_is_asked_again_not_accepted(thinker, monkeypatch):
+    from jev_ultrafast import reasoner
+
+    monkeypatch.setattr(loop, "choose", Mock(return_value=s1("BLOCKED", system2=0.9)))
+    monkeypatch.setattr(loop.reasoner, "review", Mock(side_effect=reasoner.ReviewUnavailable("late")))
+    for _ in range(3):
+        thinker.command("tick")
+        assert thinker.state["status"] == "ready"
+    with pytest.raises(ValueError, match="identical Jev request"):
+        thinker.command("tick")
+    assert thinker.state["status"] == "blocked" and len(thinker.state["reviews"]) == 3
+
+
+def test_jev_routes_through_openrouter_without_a_typesafe_key(monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "router")
+    monkeypatch.setenv("TYPESAFE_MODEL", "jev-latest")
+    assert model.jev_endpoint() == ("https://openrouter.ai/api/alpha/decisions", "router", "~typesafe/jev-latest")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "direct")
+    assert model.jev_endpoint()[:2] == ("https://api.typesafe.ai/v1/systemone", "direct")
+
+
+def test_shared_openrouter_key_is_never_sent_elsewhere(monkeypatch):
+    monkeypatch.delenv("TEXT_MODEL_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "router")
+    assert model.api_key("TEXT_MODEL", "https://openrouter.ai/api/v1") == "router"
+    assert model.api_key("TEXT_MODEL", "https://api.deepseek.com/v1") is None
+    assert model.api_key("TEXT_MODEL", "https://openrouter.ai.evil.test/v1") is None
+
+
+def test_call_budget_stops_before_the_next_model_call(runner, monkeypatch):
+    monkeypatch.setenv("JEV_MAX_CALLS", "2")
+    choose = Mock(return_value=s1("CLICK", "2", "e3"))
+    monkeypatch.setattr(loop, "choose", choose)
+    runner.state["text_calls"] = [{"usage": {}}]
+    runner.command("predict")
+    with pytest.raises(ValueError, match="2-call model budget"):
+        runner.command("predict")
+    assert choose.call_count == 1 and runner.state["status"] == "blocked"
+
+
+def test_identical_jev_request_is_never_sent_a_fourth_time(runner, monkeypatch):
+    # A page that keeps going stale re-observes the same state; the same request must not loop forever.
+    choose = Mock(return_value=s1("CLICK", "2", "e3"))
+    monkeypatch.setattr(loop, "choose", choose)
+    for _ in range(3):
+        runner.command("predict")
+    with pytest.raises(ValueError, match="identical Jev request"):
+        runner.command("predict")
+    assert choose.call_count == 3 and runner.state["status"] == "blocked"
+    runner.state["browser"].act.assert_not_called()
+
+
+def test_repeated_attempts_on_a_changing_page_stop_before_a_fourth_try(runner, monkeypatch):
+    helper = Mock(return_value=("Bald Eagle", {"model": "test", "latency_ms": 1}))
+    monkeypatch.setattr(loop, "field_text", helper)
+    runner.state["browser"].act.side_effect = StalePage("banner rotated")
+    for attempt in range(3):
+        runner.state["decisions"].append({"usage": {}})
+        runner.state["decision"] = decision("e1")
+        with pytest.raises(StalePage):
+            runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+        runner.state["page"]["text"] = f"banner {attempt}"  # Each retry sees a different page and prompt.
+    runner.state["decisions"].append({"usage": {}})
+    runner.state["decision"] = decision("e1")
+    with pytest.raises(ValueError, match="chosen 3 times without executing"):
+        runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    assert runner.state["status"] == "blocked" and helper.call_count == 3
+
+
+def test_submit_is_offered_for_editable_fields_only():
+    p = page()
+    p["actions"].append({**p["actions"][0], "id": "e1-enter", "kind": "submit"})
+    elements, targets, _ = model.action_space(p["actions"])
+    assert elements[0]["operations"] == ["TYPE_TEXT", "CLICK", "PRESS_ENTER"]
+    assert list(targets["PRESS_ENTER"]) == ["1"] and targets["PRESS_ENTER"]["1"]["id"] == "e1-enter"
+
+
+def test_unexecuted_attempt_is_reported_to_jev_then_cleared(runner, monkeypatch):
+    runner.state["browser"].act.side_effect = [StalePage("Target changed or is covered. Observe again."), None]
+    runner.state["decision"] = decision("e3")
+    with pytest.raises(StalePage):
+        runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    assert runner.failed == {"action": "Go", "kind": "click", "reason": "Target changed or is covered. Observe again."}
+    sent = []
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test")
+    monkeypatch.setattr(model, "post_json", lambda *a: sent.append(a[2]) or jev(0.1, "WAIT")(*a))
+    runner.command("predict")
+    assert sent[0]["state"]["last_failed_attempt"]["action"] == "Go"
+    runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    assert runner.failed is None
+
+
+def test_text_helper_without_a_value_is_a_failed_attempt_not_a_crash(runner, monkeypatch):
+    monkeypatch.setattr(loop, "field_text", Mock(side_effect=model.NoTextValue("no value")))
+    with pytest.raises(StalePage):
+        runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    assert runner.failed["reason"] == "no value" and runner.state["status"] == "predicted"
+    runner.state["browser"].act.assert_not_called()
+
+
+def test_huge_dropdowns_are_capped_and_capped_options_cannot_be_chosen():
+    actions = [
+        {"id": f"s{i}", "kind": "select", "label": f"Model → iPhone {i}", "value": str(i), "node": 5}
+        for i in range(100)
+    ]
+    elements, targets, _ = model.action_space(actions)
+    assert len(elements[0]["options"]) == model.MAX_OPTIONS == len(targets["SELECT"])
+    assert "1:21" not in targets["SELECT"] and elements[0]["options"][0]["label"] == "iPhone 0"
+    many = [{**a, "node": 5 + i // 20, "id": f"t{i}"} for i, a in enumerate(actions * 2)]
+    assert len(model.action_space(many)[1]["SELECT"]) == model.MAX_PAGE_OPTIONS
+
+
+def test_covered_controls_are_not_offered():
+    p = page()
+    p["actions"][2]["covered"] = True  # "Go" sits under a banner.
+    _, targets, _ = model.action_space(p["actions"])
+    assert "e3" not in {a["id"] for a in targets["CLICK"].values()}
+
+
+@pytest.mark.parametrize(
+    "body, message",
+    [
+        ({"task": "custom", "url": "javascript:alert(1)", "goal": "Open it"}, "http"),
+        ({"task": "custom", "url": "file:///etc/passwd", "goal": "Open it"}, "http"),
+        ({"task": "nope", "goal": "Open it"}, "Unknown test task"),
+        ({"task": "filters", "goal": ""}, "1–2,000"),
+    ],
+)
+def test_console_rejects_unsafe_or_unknown_runs_before_opening_a_browser(monkeypatch, body, message):
+    from jev_ultrafast import demo
+
+    opened = Mock()
+    monkeypatch.setattr(demo, "Agent", opened)
+    with pytest.raises(ValueError, match=message):
+        demo.command("reset", body)
+    opened.assert_not_called()
+
+
+def test_every_task_has_a_goal_start_url_and_check():
+    from jev_ultrafast.tasks import tasks
+
+    all_tasks = tasks("http://127.0.0.1:8766")
+    assert {t.suite for t in all_tasks.values()} == {"core", "wildlife", "reallife"}
+    assert all(t.goal and t.url.startswith("http") and callable(t.check) for t in all_tasks.values())

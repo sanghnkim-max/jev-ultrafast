@@ -72,21 +72,26 @@ class Browser:
                     awaitPromise=True,
                     returnByValue=True,
                 )
-            except RuntimeError:
+            except (RuntimeError, TimeoutError):
                 pass
+        deadline = time.monotonic() + 8
         for attempt in range(10):
             try:
                 return browser_operation(
                     {"operation": "observe", "session": self.session, "screenshot": screenshot}
                 )
-            except StalePage:
-                if attempt == 9:
-                    raise
+            except (StalePage, TimeoutError):
+                # A navigation can stall the daemon's evaluation; observing is read-only, so try again,
+                # but within one overall deadline so a stalled page cannot eat a minute.
+                if attempt == 9 or time.monotonic() > deadline:
+                    raise StalePage("Page did not settle") from None
                 time.sleep(0.02)
         raise StalePage("Page did not settle")
 
     def fresh(self, page, action=None):
-        if action is not None and action["kind"] in {"click", "select"}:
+        # Target-scoped guard: document, URL, viewport, form values, the target, and its surrounding form/row.
+        # Typing uses it too; a rotating banner elsewhere must not make a field untypeable forever.
+        if action is not None and action["kind"] in {"click", "select", "fill", "submit"}:
             node = action["node"]
             if type(node) is not int:
                 return False
@@ -145,7 +150,8 @@ def browser_operation(request):
               const e=window.__jevFast?.nodes.get(action.node);
               if (!e?.isConnected || e.matches(':disabled') || e.closest('[aria-disabled="true"],[inert]') ||
                   !e.checkVisibility({checkOpacity:true,checkVisibilityCSS:true})) return null;
-              if (action.kind==='fill' && (e.readOnly || e.getAttribute('aria-readonly')==='true')) return null;
+              if (['fill','submit'].includes(action.kind) &&
+                  (e.readOnly || e.getAttribute('aria-readonly')==='true')) return null;
               const r=e.getBoundingClientRect(), x=r.x+r.width/2, y=r.y+r.height/2;
               if (!r.width || !r.height || x<0 || y<0 || x>=innerWidth || y>=innerHeight) return null;
               if (!e.contains(document.elementFromPoint(x,y))) return null;
@@ -183,11 +189,20 @@ def browser_operation(request):
                         modifiers=4 if sys.platform == "darwin" else 2,
                     )
                     call("Input.insertText", text=request["text"])
+                if kind == "submit":
+                    # Enter in the focused field submits its form, the way a person finishes a search.
+                    call("Input.dispatchKeyEvent", type="keyDown", key="Enter", code="Enter",
+                         windowsVirtualKeyCode=13, text="\r")
+                    call("Input.dispatchKeyEvent", type="keyUp", key="Enter", code="Enter", windowsVirtualKeyCode=13)
         return {"executed": action["id"]}
 
     info = evaluate(READ_STATE)
     if info is None:
         raise StalePage("Document is navigating")
+    info["actions"] += [
+        {**a, "id": a["id"] + "-enter", "kind": "submit", "label": a["label"]}
+        for a in info["actions"] if a["kind"] == "fill"
+    ]
     info["fingerprint"] = fingerprint(info)
     if request.get("screenshot", True):
         info["screenshot"] = call("Page.captureScreenshot", format="jpeg", quality=72)["data"]

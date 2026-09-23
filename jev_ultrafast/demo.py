@@ -9,8 +9,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+from . import reasoner
 from .agent import Agent
 from .questions import MAX_STEPS
+from .tasks import tasks, verify
 
 ROOT = Path(__file__).parent
 PORT = int(os.environ.get("TYPESAFE_DEMO_PORT", "8766"))
@@ -18,6 +20,9 @@ ORIGIN = f"http://127.0.0.1:{PORT}"
 TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.Lock()
 AGENT = None
+TASKS = tasks(ORIGIN)
+RUN = {}  # The current run's task, mode, and independent verification.
+RESULTS = []  # Finished runs this session, newest last.
 
 
 def load_environment():
@@ -29,9 +34,60 @@ def load_environment():
                 os.environ.setdefault(key, value)
 
 
+def system2_status():
+    try:
+        return {"available": True, "model": reasoner.settings()[0]}
+    except ValueError as error:
+        return {"available": False, "error": str(error)}
+
+
+def finish_run():
+    """Verify a stopped run once, from a fresh observation, and log it."""
+    if not AGENT or RUN.get("verification") or AGENT.state["status"] not in {"done", "blocked"}:
+        return
+    state = AGENT.state
+    check = RUN.get("check")
+    if check is None:
+        RUN["verification"] = {"passed": None, "checks": {}, "note": RUN["unverified"]}
+    elif state["status"] != "done":
+        RUN["verification"] = {"passed": False, "checks": {}, "note": RUN.get("stopped") or "Stopped without DONE"}
+    else:
+        try:
+            RUN["verification"] = verify(check, AGENT)
+        except Exception as error:
+            RUN["verification"] = {"passed": False, "checks": {}, "note": f"Verification failed: {error}"}
+    RESULTS.append(
+        {
+            "task": RUN["task"],
+            "label": RUN["label"],
+            "mode": "System 1 + 2" if AGENT.reasoning else "System 1",
+            "passed": RUN["verification"]["passed"],
+            "status": state["status"],
+            "ms": state["elapsed_ms"],
+            "actions": len(state["history"]),
+            "system1_calls": len(state["decisions"]),
+            "system2_calls": len(state["reviews"]),
+            "system2_overrides": sum(not r["agrees"] for r in state["reviews"]),
+            "system2_late": sum("failed" in r for r in state["reviews"]),
+            "url": state["page"]["url"],
+        }
+    )
+
+
 def response_state():
+    finish_run()
     state = AGENT.snapshot() if AGENT else {"page": None, "status": "idle", "history": [], "decision": None}
-    return {**state, "text_model": os.environ.get("TEXT_MODEL", "deepseek-chat"), "max_steps": MAX_STEPS}
+    return {
+        **state,
+        "text_model": os.environ.get("TEXT_MODEL", "deepseek-chat"),
+        "max_steps": MAX_STEPS,
+        "tasks": [
+            {"name": k, "label": t.label, "url": t.url, "goal": t.goal, "suite": t.suite} for k, t in TASKS.items()
+        ],
+        "system2": system2_status(),
+        "run": {k: v for k, v in RUN.items() if k != "check"},
+        "results": RESULTS,
+    }
 
 
 def close_browser():
@@ -44,22 +100,39 @@ def close_browser():
 def command(name, body):
     global AGENT
     if name == "reset":
-        scenario = body.get("scenario", "flights")
-        if scenario not in {"travel", "research", "flights"}:
-            raise ValueError("Unknown demo scenario")
+        task = body.get("task", "flights")
         goal = body.get("goal", "").strip()
         if not goal or len(goal) > 2000:
             raise ValueError("Enter 1–2,000 characters")
+        if task == "custom":
+            url = body.get("url", "").strip()
+            if urlparse(url).scheme not in {"http", "https"} or not urlparse(url).hostname or len(url) > 2000:
+                raise ValueError("Enter an http(s) start URL")
+            label, check, unverified = "Custom · " + urlparse(url).hostname, None, "Custom task: no verifier"
+        elif task in TASKS:
+            label, url, preset_goal, check, _ = TASKS[task]
+            unverified = None
+            if goal != preset_goal:
+                # A preset check only proves the preset goal.
+                check, unverified = None, "Goal edited: preset check not applied"
+        else:
+            raise ValueError("Unknown test task")
         close_browser()
+        RUN.clear()
         AGENT = Agent(
-            "https://www.google.com/travel/flights?hl=en"
-            if scenario == "flights"
-            else f"{ORIGIN}/fixture.html?scenario={scenario}",
+            url,
             goal,
             screenshots=True,
             record_dir=Path.cwd() / "artifacts" / "frames" if body.get("record") else None,
+            reasoning=bool(body.get("reasoning")),
         )
-        AGENT.state["scenario"] = scenario
+        RUN.update(task=task, label=label, check=check, unverified=unverified)
+        AGENT.state["scenario"] = task
+    elif name == "stop":
+        # Ends a run that failed mid-way, so it is logged as a result instead of silently abandoned.
+        if AGENT and AGENT.state["status"] not in {"done", "blocked"}:
+            AGENT.state["status"] = "blocked"
+            RUN["stopped"] = str(body.get("reason", "Stopped by the tester"))[:300]
     else:
         if AGENT is None:
             raise ValueError("Start a demo first")
@@ -94,6 +167,7 @@ class Handler(BaseHTTPRequestHandler):
             "/app.js": ("app.js", "text/javascript"),
             "/style.css": ("style.css", "text/css"),
             "/fixture.html": ("fixture.html", "text/html"),
+            "/wildlife.html": ("wildlife.html", "text/html"),
         }
         if path not in files:
             return self.send(404, "Not found", "text/plain")

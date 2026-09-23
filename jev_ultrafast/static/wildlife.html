@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Wildwatch · Field guide</title>
+    <style>
+      :root { font-family: Georgia, "Times New Roman", serif; color: #1f2a1f; background: #f6f3ea; }
+      * { box-sizing: border-box; }
+      body { margin: 0; }
+      header { display: flex; align-items: center; justify-content: space-between; padding: 18px 40px; background: #24402c; color: #f6f3ea; }
+      header a { color: inherit; text-decoration: none; margin-left: 22px; font-size: 14px; }
+      .logo { font-size: 22px; font-weight: bold; margin: 0; letter-spacing: 0.5px; }
+      main { max-width: 1040px; margin: 0 auto; padding: 26px 40px 60px; }
+      h1 { font-size: 30px; margin: 0 0 6px; }
+      .lede { margin: 0 0 20px; color: #4d5b4d; }
+      form.search, .filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 14px; font-size: 14px; }
+      input, select, button { font: inherit; font-size: 14px; }
+      input[type="search"], input[type="text"], input[type="number"] { padding: 8px 10px; border: 1px solid #9fae98; border-radius: 6px; background: white; }
+      input[type="search"] { width: 340px; }
+      select { padding: 7px 8px; border: 1px solid #9fae98; border-radius: 6px; background: white; }
+      button { padding: 8px 14px; border: 1px solid #24402c; border-radius: 6px; background: #24402c; color: white; cursor: pointer; }
+      button.secondary { background: white; color: #24402c; }
+      fieldset { border: 1px solid #c8cfbf; border-radius: 6px; padding: 6px 12px; display: flex; gap: 12px; flex-wrap: wrap; }
+      legend { font-size: 12px; color: #4d5b4d; }
+      .count { color: #4d5b4d; font-size: 13px; margin: 6px 0 12px; }
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+      .card { background: white; border: 1px solid #d8dccf; border-radius: 8px; padding: 14px; }
+      .card h2 { font-size: 18px; margin: 0 0 2px; }
+      .sci { font-style: italic; color: #5d6a5d; font-size: 13px; margin: 0 0 8px; }
+      .facts { font-size: 13px; margin: 0 0 10px; line-height: 1.5; }
+      .status { display: inline-block; font-size: 11px; padding: 2px 6px; border-radius: 4px; background: #e9efe2; }
+      .status.EN, .status.CR { background: #f7dfd4; color: #8a2f12; }
+      .empty { padding: 30px; background: white; border: 1px dashed #aab5a2; border-radius: 8px; }
+      .detail { background: white; border: 1px solid #d8dccf; border-radius: 8px; padding: 22px; }
+      .detail dl { display: grid; grid-template-columns: 180px 1fr; gap: 6px 12px; font-size: 14px; }
+      .detail dt { color: #5d6a5d; }
+      .report { margin-top: 22px; display: grid; grid-template-columns: 160px 280px; gap: 10px 14px; align-items: center; font-size: 14px; }
+      .confirmation { margin-top: 18px; padding: 16px; border-radius: 8px; background: #e9efe2; }
+      footer { margin-top: 40px; font-size: 12px; color: #6d786b; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <p class="logo">Wildwatch</p>
+      <nav><a href="#" id="nav-guide">Field guide</a><a href="#" id="nav-about">About</a></nav>
+    </header>
+    <main id="content"></main>
+    <script>
+      // Local benchmark data. Outcomes are checked from the final page, never from the agent's DONE.
+      const species = [
+        { id: "snow-leopard", name: "Snow leopard", sci: "Panthera uncia", habitat: "Mountain", status: "VU", population: 4000, weight: 55, fact: "Uses its long tail for balance on steep rock." },
+        { id: "red-fox", name: "Red fox", sci: "Vulpes vulpes", habitat: "Forest", status: "LC", population: 7000000, weight: 7, fact: "The most widely distributed wild carnivore." },
+        { id: "bald-eagle", name: "Bald eagle", sci: "Haliaeetus leucocephalus", habitat: "Wetland", status: "LC", population: 316000, weight: 5, fact: "National bird of the United States." },
+        { id: "vaquita", name: "Vaquita", sci: "Phocoena sinus", habitat: "Ocean", status: "CR", population: 10, weight: 50, fact: "The world's rarest marine mammal." },
+        { id: "blue-whale", name: "Blue whale", sci: "Balaenoptera musculus", habitat: "Ocean", status: "EN", population: 15000, weight: 150000, fact: "The largest animal known to have ever existed." },
+        { id: "green-sea-turtle", name: "Green sea turtle", sci: "Chelonia mydas", habitat: "Ocean", status: "EN", population: 85000, weight: 160, fact: "Named for the green fat beneath its shell." },
+        { id: "whooping-crane", name: "Whooping crane", sci: "Grus americana", habitat: "Wetland", status: "EN", population: 800, weight: 7, fact: "The tallest North American bird." },
+        { id: "sumatran-orangutan", name: "Sumatran orangutan", sci: "Pongo abelii", habitat: "Forest", status: "CR", population: 14000, weight: 70, fact: "Spends almost its whole life in the canopy." },
+        { id: "african-elephant", name: "African savanna elephant", sci: "Loxodonta africana", habitat: "Grassland", status: "EN", population: 350000, weight: 6000, fact: "The largest living land animal." },
+        { id: "cheetah", name: "Cheetah", sci: "Acinonyx jubatus", habitat: "Grassland", status: "VU", population: 6500, weight: 50, fact: "The fastest land animal." },
+        { id: "axolotl", name: "Axolotl", sci: "Ambystoma mexicanum", habitat: "Wetland", status: "CR", population: 1000, weight: 0.2, fact: "Can regrow limbs, heart tissue, and parts of its brain." },
+        { id: "mountain-gorilla", name: "Mountain gorilla", sci: "Gorilla beringei beringei", habitat: "Mountain", status: "EN", population: 1060, weight: 160, fact: "Lives in cloud forests above 2,200 m." },
+      ];
+      const statuses = { LC: "Least concern", VU: "Vulnerable", EN: "Endangered", CR: "Critically endangered" };
+      const root = document.getElementById("content");
+      const view = { query: "", habitat: "all", statuses: new Set(), sort: "name" };
+      const number = (n) => n.toLocaleString("en-US");
+
+      function guide() {
+        document.title = "Wildwatch · Field guide";
+        location.hash = "";
+        root.innerHTML = `<h1>Field guide</h1><p class="lede">Twelve species, their habitats, and how many remain in the wild.</p>
+          <form class="search" id="search" role="search"><input type="search" id="query" aria-label="Search species" placeholder="Search by common or scientific name"><button type="submit">Search</button></form>
+          <div class="filters"><label>Habitat <select id="habitat" aria-label="Habitat"><option value="all">All habitats</option>${["Forest", "Ocean", "Grassland", "Wetland", "Mountain"].map((h) => `<option value="${h}">${h}</option>`).join("")}</select></label>
+          <fieldset><legend>Conservation status</legend>${Object.entries(statuses).map(([k, v]) => `<label><input type="checkbox" data-status="${k}"> ${v}</label>`).join("")}</fieldset>
+          <label>Sort by <select id="sort" aria-label="Sort species"><option value="name">Name (A–Z)</option><option value="population-asc">Population (fewest first)</option><option value="population-desc">Population (most first)</option><option value="weight-desc">Weight (heaviest first)</option></select></label></div>
+          <p class="count" id="count"></p><div class="grid" id="results"></div>
+          <footer>Local benchmark fixture · populations are rounded public estimates.</footer>`;
+        document.getElementById("query").value = view.query;
+        document.getElementById("habitat").value = view.habitat;
+        document.getElementById("sort").value = view.sort;
+        document.querySelectorAll("[data-status]").forEach((box) => {
+          box.checked = view.statuses.has(box.dataset.status);
+          box.onchange = () => {
+            box.checked ? view.statuses.add(box.dataset.status) : view.statuses.delete(box.dataset.status);
+            results();
+          };
+        });
+        document.getElementById("search").onsubmit = (event) => {
+          event.preventDefault();
+          view.query = document.getElementById("query").value.trim();
+          results();
+        };
+        document.getElementById("habitat").onchange = (event) => { view.habitat = event.target.value; results(); };
+        document.getElementById("sort").onchange = (event) => { view.sort = event.target.value; results(); };
+        results();
+      }
+
+      function results() {
+        const q = view.query.toLowerCase();
+        const rows = species
+          .filter((s) => !q || s.name.toLowerCase().includes(q) || s.sci.toLowerCase().includes(q))
+          .filter((s) => view.habitat === "all" || s.habitat === view.habitat)
+          .filter((s) => !view.statuses.size || view.statuses.has(s.status))
+          .sort((a, b) => ({
+            name: a.name.localeCompare(b.name),
+            "population-asc": a.population - b.population,
+            "population-desc": b.population - a.population,
+            "weight-desc": b.weight - a.weight,
+          })[view.sort]);
+        document.getElementById("count").textContent = `${rows.length} species`;
+        document.getElementById("results").innerHTML = rows.length
+          ? rows.map((s) => `<article class="card"><h2>${s.name}</h2><p class="sci">${s.sci}</p>
+              <p class="facts">${s.habitat} · <span class="status ${s.status}">${statuses[s.status]}</span><br>Estimated wild population: ${number(s.population)}<br>Typical adult weight: ${number(s.weight)} kg</p>
+              <button type="button" class="secondary" data-species="${s.id}" aria-label="View ${s.name}">View species</button></article>`).join("")
+          : '<div class="empty">No species match these filters.</div>';
+        document.querySelectorAll("[data-species]").forEach((b) => (b.onclick = () => detail(b.dataset.species)));
+      }
+
+      function filterSummary() {
+        return `Habitat ${view.habitat} · Status ${[...view.statuses].sort().join(",") || "any"} · Sort ${view.sort} · Search ${view.query || "none"}`;
+      }
+
+      function detail(id) {
+        const s = species.find((x) => x.id === id);
+        location.hash = s.id;
+        document.title = `${s.name} · Wildwatch`;
+        root.innerHTML = `<button type="button" class="secondary" id="back">← Field guide</button>
+          <div class="detail"><h1>${s.name}</h1><p class="sci">${s.sci}</p><p>${s.fact}</p>
+          <dl><dt>Habitat</dt><dd>${s.habitat}</dd><dt>Conservation status</dt><dd>${statuses[s.status]}</dd>
+          <dt>Estimated wild population</dt><dd>${number(s.population)}</dd><dt>Typical adult weight</dt><dd>${number(s.weight)} kg</dd></dl>
+          <h2>Report a sighting</h2>
+          <form class="report" id="report"><label for="where">Location</label><input type="text" id="where" name="where" autocomplete="off">
+          <label for="when">Date (YYYY-MM-DD)</label><input type="text" id="when" name="when" autocomplete="off">
+          <label for="howmany">Number seen</label><input type="number" id="howmany" name="howmany" min="1">
+          <span></span><button type="submit">Submit sighting</button></form>
+          <div id="confirmation"></div></div>
+          <p class="count" data-testid="filters">Browsing state: ${filterSummary()}</p>
+          <footer>Local benchmark fixture. No data leaves this page.</footer>`;
+        document.getElementById("back").onclick = guide;
+        document.getElementById("report").onsubmit = (event) => {
+          event.preventDefault();
+          const where = document.getElementById("where").value.trim();
+          const when = document.getElementById("when").value.trim();
+          const count = Number(document.getElementById("howmany").value);
+          const box = document.getElementById("confirmation");
+          if (!where || !/^\d{4}-\d{2}-\d{2}$/.test(when) || !(count >= 1)) {
+            box.innerHTML = '<p class="confirmation" role="alert">Please enter a location, a date as YYYY-MM-DD, and a number seen.</p>';
+            return;
+          }
+          location.hash = `${s.id}/reported`;
+          box.innerHTML = `<p class="confirmation" role="status">Sighting recorded: ${count} × ${s.name} at ${where} on ${when}.</p>`;
+        };
+      }
+
+      function about() {
+        document.title = "About · Wildwatch";
+        location.hash = "about";
+        root.innerHTML = `<h1>About Wildwatch</h1><p>A volunteer field guide. Sightings help researchers track population changes.</p><footer>Local benchmark fixture.</footer>`;
+      }
+
+      document.getElementById("nav-guide").onclick = (event) => { event.preventDefault(); guide(); };
+      document.getElementById("nav-about").onclick = (event) => { event.preventDefault(); about(); };
+      guide();
+    </script>
+  </body>
+</html>
