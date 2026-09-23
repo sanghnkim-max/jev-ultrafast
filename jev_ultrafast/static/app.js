@@ -150,6 +150,17 @@ function renderGates(d, page) {
     .map(([name, value, limit, cls]) => `<tr><td>${name}</td><td class="${cls}">${value}</td><td class="off">${limit}</td></tr>`)
     .join("");
 }
+function textInput(h) {
+  // The exact request the text helper answered for this typed value: instructions, then the JSON input.
+  const call = h.text_call != null ? state.text_calls?.[h.text_call] : null;
+  if (!call?.input) return "";
+  const usage = call.usage || {};
+  return `<details class="helper-input"><summary>Text helper input · ${escape(call.model)} · ${call.latency_ms} ms` +
+    `${usage.prompt_tokens ? ` · ${usage.prompt_tokens} in / ${usage.completion_tokens} out` : ""}</summary>` +
+    `<p class="muted">System instructions</p><pre>${escape(state.text_instructions)}</pre>` +
+    `<p class="muted">Input</p><pre>${escape(JSON.stringify(call.input, null, 2))}</pre>` +
+    `<p class="muted">Output</p><pre>${escape(JSON.stringify({ text: call.value }))}</pre></details>`;
+}
 function renderResults() {
   const rows = state.results || [];
   $("result-count").textContent = `${rows.length} runs · ${rows.filter((r) => r.passed).length} verified`;
@@ -235,7 +246,7 @@ function render() {
     ? state.history
         .map(
           (h) =>
-            `<div class="trace-row"><span class="number">${String(h.step).padStart(2, "0")}</span><div><span class="badge ${h.system === 2 ? "s2" : ""}">S${h.system || 1}</span>${escape(h.action)}${h.text ? ` <b>“${escape(h.text)}”</b><small>${escape(h.text_helper)}</small>` : ""}${h.note ? `<span class="note">${escape(h.note)}</span>` : ""}</div><span class="time">${h.latency_ms} ms · ${h.system === 2 ? "System 2" : percent(h.probability)}</span><span class="effect">${h.page_changed ? "Page changed" : "No change observed"}</span></div>`,
+            `<div class="trace-row"><span class="number">${String(h.step).padStart(2, "0")}</span><div><span class="badge ${h.system === 2 ? "s2" : ""}">S${h.system || 1}</span>${escape(h.action)}${h.text ? ` <b>“${escape(h.text)}”</b><small>${escape(h.text_helper)}</small>` : ""}${h.note ? `<span class="note">${escape(h.note)}</span>` : ""}${textInput(h)}</div><span class="time">${h.latency_ms} ms · ${h.system === 2 ? "System 2" : percent(h.probability)}</span><span class="effect">${h.page_changed ? "Page changed" : "No change observed"}</span></div>`,
         )
         .join("")
     : '<p class="muted">Each executed action leaves an observed result.</p>';

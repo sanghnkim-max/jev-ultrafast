@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 from . import reasoner
 from .agent import Agent
-from .questions import MAX_STEPS
+from .questions import MAX_STEPS, TEXT_VALUE
 from .tasks import tasks, verify
 
 ROOT = Path(__file__).parent
@@ -80,6 +80,7 @@ def response_state():
     return {
         **state,
         "text_model": os.environ.get("TEXT_MODEL", "deepseek-chat"),
+        "text_instructions": TEXT_VALUE,
         "max_steps": MAX_STEPS,
         "tasks": [
             {"name": k, "label": t.label, "url": t.url, "goal": t.goal, "suite": t.suite} for k, t in TASKS.items()
@@ -92,9 +93,10 @@ def response_state():
 
 def close_browser():
     global AGENT
-    if AGENT:
-        AGENT.close()
-        AGENT = None
+    agent, AGENT = AGENT, None
+    # Forget the old run even if closing its tab fails, so the next run can start.
+    if agent:
+        agent.close()
 
 
 def command(name, body):

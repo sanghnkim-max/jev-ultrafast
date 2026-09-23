@@ -181,8 +181,10 @@ class Agent:
                     except NoTextValue as error:
                         self.failed = {"action": action["label"], "kind": action["kind"], "reason": str(error)}
                         raise StalePage(str(error)) from None
+                    # Keep the exact helper input beside its output, so a typed value can be audited.
+                    helper = {**helper, "call": len(state["text_calls"])}
                     self.pending_text = (context, text, helper)
-                    state["text_calls"].append({**helper, "field": action["label"], "value": text})
+                    state["text_calls"].append({**helper, "field": action["label"], "value": text, "input": context})
             call = (action["kind"], action["label"], text)
             if sum((h["kind"], h["action"], h["text"]) == call for h in state["history"]) >= MAX_REPEATS:
                 # Safety boundary: whoever chose it, the same action with the same argument never runs a 4th time.
@@ -210,6 +212,7 @@ class Agent:
                     "text": text,
                     "text_helper": helper["model"] if helper else None,
                     "text_latency_ms": helper["latency_ms"] if helper else 0,
+                    "text_call": helper["call"] if helper else None,
                     "operation": decision["operation"],
                     "target": decision["target"],
                     "page_changed": None,
